@@ -1,0 +1,35 @@
+name: "Проверка на PR"
+
+on:
+  pull_request:
+jobs:
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Скачать код"
+        uses: actions/checkout@v4
+      - name: "Установить Node.js"
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: "Установить зависимости"
+        run: npm ci
+
+      - name: "Запустить линтер"
+        run: npm run lint
+
+  test: 
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Скачать код"
+        uses: actions/checkout@v4
+      - name: "Установить Node.js"
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: "Установить зависимости"
+        run: npm ci
+
+      - name: "Запустить тесты"
+        run: npm run test
