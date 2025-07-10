@@ -1,6 +1,12 @@
 import axios from 'axios';
 import { CartState, CheckoutFormData, CheckoutResponse, Product, ProductShortInfo } from '../common/types';
 
+// Плохо отформатированный код для тестирования линтера
+const badVariable=123;const another_bad_var   =   "test"   ;
+
+// Явная синтаксическая ошибка - неопределенная переменная
+console.log(undefinedVariable);
+
 export class ExampleApi {
     constructor(private readonly basename: string) {
 
@@ -15,6 +21,9 @@ export class ExampleApi {
     }
 
     async checkout(form: CheckoutFormData, cart: CartState) {
+        console.log(badVariable,another_bad_var)  // плохое форматирование
+        // Еще одна ошибка - неопределенная функция
+        nonExistentFunction();
         return await axios.post<CheckoutResponse>(`${this.basename}/api/checkout`, { form, cart });
     }
 }

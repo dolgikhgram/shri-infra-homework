@@ -6,6 +6,7 @@ describe('About', () => {
     it('Should render author name', () => {
         const { container } = render(<About />);
 
-        expect(container.textContent).toBe('AboutAuthor: Nikita Dolgikh');
+        // Намеренно ломаем тест для проверки защиты ветки
+        expect(container.textContent).toBe('Это неправильное ожидание - тест должен провалиться');
     });
 });
