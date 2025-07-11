@@ -71,10 +71,8 @@ jobs:
           # Попробуем простую авторизацию через docker login  
           echo "Авторизуемся в Container Registry..."
           
-          # Сохраняем JSON в файл более безопасно
-          cat > key.json << 'EOL'
-${{ secrets.YC_SERVICE_ACCOUNT_KEY }}
-EOL
+          # Сохраняем JSON в файл через переменную
+          echo '${{ secrets.YC_SERVICE_ACCOUNT_KEY }}' > key.json
           
           # Попробуем авторизацию через json_key
           cat key.json | docker login \
