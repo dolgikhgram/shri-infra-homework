@@ -7,6 +7,6 @@ describe('About', () => {
         const { container } = render(<About />);
 
         // Намеренно ломаем тест для проверки защиты ветки
-        expect(container.textContent).toBe('Это неправильное ожидание - тест должен провалиться');
+        expect(container.textContent).toBe('AboutAuthor: Nikita Dolgikh');
     });
 });
