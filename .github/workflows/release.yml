@@ -53,12 +53,34 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: releases/${{ needs.create-release-branch.outputs.release-version }}
-      - name: "Сборка Dockera"
-        run:  |
+          
+      - name: "Сборка Docker образа"
+        run: |
           VERSION=${{ needs.create-release-branch.outputs.release-version }}
           docker build -t shri-app:$VERSION .
-          docker build -t shri-app:${VERSION}_latest .
-          echo "Образы собраны с тегами: $VERSION и ${VERSION}_latest"
+          echo "Образ собран с тегом: $VERSION"
+          
+      - name: "Авторизация в Yandex Container Registry"
+        run: |
+          echo '${{ secrets.YC_SERVICE_ACCOUNT_KEY }}' | docker login \
+            --username json_key \
+            --password-stdin \
+            cr.yandex
+          echo "Успешно авторизовались в Yandex Container Registry"
+          
+      - name: "Тегирование для Yandex Container Registry"
+        run: |
+          VERSION=${{ needs.create-release-branch.outputs.release-version }}
+          docker tag shri-app:$VERSION cr.yandex/${{ secrets.YC_REGISTRY_ID }}/app:$VERSION
+          docker tag shri-app:$VERSION cr.yandex/${{ secrets.YC_REGISTRY_ID }}/app:${VERSION}_latest
+          echo "Образы перетегированы для Container Registry"
+          
+      - name: "Загрузка образов в Container Registry"
+        run: |
+          VERSION=${{ needs.create-release-branch.outputs.release-version }}
+          docker push cr.yandex/${{ secrets.YC_REGISTRY_ID }}/app:$VERSION
+          docker push cr.yandex/${{ secrets.YC_REGISTRY_ID }}/app:${VERSION}_latest
+          echo "Образы успешно загружены в Container Registry"
   create-git-tag:
     needs: [create-release-branch, build-and-push-docker]
     runs-on: ubuntu-latest
@@ -120,7 +142,7 @@ jobs:
           **Версия:** $VERSION  
           
           ### Docker образ:
-          \`cr.yandex/<REGISTRY_ID>/app:$VERSION\`
+          \`cr.yandex/${{ secrets.YC_REGISTRY_ID }}/app:$VERSION\`
           
           ### Список изменений:
           ${{ steps.get-commits.outputs.commits }}
