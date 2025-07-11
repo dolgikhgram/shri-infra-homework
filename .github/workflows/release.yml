@@ -1,0 +1,200 @@
+name: "Создание релиза"
+
+on:
+  workflow_dispatch:
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Скачать код"
+        uses: actions/checkout@v4
+      - name: "Установить Node.js"
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: "Установить зависимости"
+        run: npm ci
+      - name: "Запустить линтер"
+        run: npm run lint
+
+      - name: "Запустить тесты"
+        run: npm run test
+  create-release-branch:
+    needs: lint-and-test
+    runs-on: ubuntu-latest
+    outputs:
+      release-version: ${{ steps.set-version.outputs.version }}
+    steps:
+      - name : "Скачать код"
+        uses : actions/checkout@v4
+        with : 
+          fetch-depth : 0
+      
+      - name: "Установить версию релиза"
+        id: set-version
+        run: |
+          VERSION=${{ github.run_number }}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Версия релиза: $VERSION"
+      
+      - name: "Создать релизную ветку"
+        run: |
+          VERSION=${{ steps.set-version.outputs.version }}
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b releases/$VERSION
+          git push origin releases/$VERSION
+  build-and-push-docker:
+    needs: create-release-branch
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Скачать код"
+        uses: actions/checkout@v4
+        with:
+          ref: releases/${{ needs.create-release-branch.outputs.release-version }}
+      - name: "Сборка Dockera"
+        run:  |
+          VERSION=${{ needs.create-release-branch.outputs.release-version }}
+          docker build -t shri-app:$VERSION .
+          docker build -t shri-app:${VERSION}_latest .
+          echo "Образы собраны с тегами: $VERSION и ${VERSION}_latest"
+  create-git-tag:
+    needs: [create-release-branch, build-and-push-docker]
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Скачать код"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: "Создать Git тег"
+        run: |
+          VERSION=${{ needs.create-release-branch.outputs.release-version }}
+          echo "Создаю тег: $VERSION"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag $VERSION
+          git push origin $VERSION
+          echo "Тег $VERSION создан и отправлен"    
+  create-github-issue:
+    needs: [create-release-branch, create-git-tag]
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Скачать код"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          
+      - name: "Получить список коммитов"
+        id: get-commits
+        run: |
+          VERSION=${{ needs.create-release-branch.outputs.release-version }}
+          echo "Получаю коммиты для версии $VERSION"
+          
+          # Ищем предыдущий релизный тег
+          PREV_TAG=$(git tag -l | grep -E '^[0-9]+(_fix[0-9]+)?$' | sort -V | tail -1)
+          
+          if [ -z "$PREV_TAG" ]; then
+            echo "Первый релиз - берём все коммиты"
+            COMMITS=$(git log --oneline --pretty=format:"- %s (%h)")
+          else
+            echo "Предыдущий тег: $PREV_TAG"
+            COMMITS=$(git log ${PREV_TAG}..HEAD --oneline --pretty=format:"- %s (%h)")
+          fi
+          
+          echo "commits<<EOF" >> $GITHUB_OUTPUT
+          echo "$COMMITS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          
+      - name: "Создать GitHub Issue"
+        run: |
+          VERSION=${{ needs.create-release-branch.outputs.release-version }}
+          DATE=$(date '+%Y-%m-%d %H:%M:%S')
+          AUTHOR="${{ github.actor }}"
+          
+          cat > issue_body.md << EOF
+          ## Релиз версии $VERSION
+          
+          **Дата:** $DATE  
+          **Автор:** @$AUTHOR  
+          **Версия:** $VERSION  
+          
+          ### Docker образ:
+          \`cr.yandex/<REGISTRY_ID>/app:$VERSION\`
+          
+          ### Список изменений:
+          ${{ steps.get-commits.outputs.commits }}
+          EOF
+          
+          echo "Создаю GitHub Issue для релиза $VERSION"
+          gh issue create \
+            --title "Релиз $VERSION" \
+            --body-file issue_body.md \
+            --label "release"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  update-changelog:
+    needs: [create-release-branch, create-github-issue]
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Скачать код"
+        uses: actions/checkout@v4
+        with:
+          ref: releases/${{ needs.create-release-branch.outputs.release-version }}
+          fetch-depth: 0
+          
+      - name: "Получить список коммитов для CHANGELOG"
+        id: get-changelog-commits
+        run: |
+          VERSION=${{ needs.create-release-branch.outputs.release-version }}
+          echo "Получаю коммиты для CHANGELOG версии $VERSION"
+          
+          # Ищем предыдущий релизный тег
+          PREV_TAG=$(git tag -l | grep -E '^[0-9]+(_fix[0-9]+)?$' | sort -V | tail -1)
+          
+          if [ -z "$PREV_TAG" ]; then
+            echo "Первый релиз - берём все коммиты"
+            COMMITS=$(git log --oneline --pretty=format:"- %s (%h)")
+          else
+            echo "Предыдущий тег: $PREV_TAG"
+            COMMITS=$(git log ${PREV_TAG}..HEAD --oneline --pretty=format:"- %s (%h)")
+          fi
+          
+          echo "commits<<EOF" >> $GITHUB_OUTPUT
+          echo "$COMMITS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          
+      - name: "Обновить CHANGELOG.md"
+        run: |
+          VERSION=${{ needs.create-release-branch.outputs.release-version }}
+          DATE=$(date '+%Y-%m-%d')
+          
+          echo "Обновляю CHANGELOG.md для версии $VERSION"
+          
+          # Создаём временный файл с новой версией
+          cat > new_changelog.md << EOF
+          ## Версия $VERSION ($DATE)
+          
+          ${{ steps.get-changelog-commits.outputs.commits }}
+          
+          EOF
+          
+          # Добавляем существующий CHANGELOG в конец
+          if [ -f "CHANGELOG.md" ]; then
+            cat CHANGELOG.md >> new_changelog.md
+          fi
+          
+          # Заменяем старый файл
+          mv new_changelog.md CHANGELOG.md
+          
+          echo "CHANGELOG.md обновлен"
+          
+      - name: "Закоммитить изменения в CHANGELOG"
+        run: |
+          VERSION=${{ needs.create-release-branch.outputs.release-version }}
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git commit -m "docs: обновить CHANGELOG.md для версии $VERSION"
+          git push origin releases/$VERSION
+          echo "CHANGELOG.md закоммичен в релизную ветку"
