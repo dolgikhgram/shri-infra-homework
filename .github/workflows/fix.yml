@@ -1,0 +1,214 @@
+name: "Фикс "
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: 'Версия релиза для фикса'
+        required: true
+        type: string
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Скачать код"
+        uses: actions/checkout@v4
+        with:
+          ref: releases/${{ github.event.inputs.release_version }}
+      - name: "Установить Node.js"
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: "Установить зависимости"
+        run: npm ci
+      - name: "Запустить линтер"
+        run: npm run lint
+      - name: "Запустить тесты"
+        run: npm run test
+
+  build-and-push-fix:
+    needs: lint-and-test
+    runs-on: ubuntu-latest
+    outputs:
+      fix-tag: ${{ steps.set-fix-tag.outputs.tag }}
+    steps:
+      - name: "Скачать код"
+        uses: actions/checkout@v4
+        with:
+          ref: releases/${{ github.event.inputs.release_version }}
+          fetch-depth: 0
+          
+      - name: "Установить тег фикса"
+        id: set-fix-tag
+        run: |
+          VERSION=${{ github.event.inputs.release_version }}
+          FIX_NUMBER=${{ github.run_number }}
+          FIX_TAG="${VERSION}_fix${FIX_NUMBER}"
+          echo "tag=$FIX_TAG" >> $GITHUB_OUTPUT
+          echo "Тег фикса: $FIX_TAG"
+          
+      - name: "Сборка Docker образа"
+        run: |
+          FIX_TAG=${{ steps.set-fix-tag.outputs.tag }}
+          docker build -t shri-app:$FIX_TAG .
+          echo "Образ собран с тегом: $FIX_TAG"
+          
+      - name: "Авторизация в Container Registry"
+        run: |
+          printf '%s\n' '${{ secrets.YC_SERVICE_ACCOUNT_KEY }}' | sed 's/\\\\n/\n/g' > key.json
+          
+          if jq empty key.json 2>/dev/null; then
+            echo "✅ JSON ключ валиден"
+          else
+            echo "❌ JSON невалиден, пропускаем Container Registry"
+            rm -f key.json
+            exit 0
+          fi
+          
+          cat key.json | docker login \
+            --username json_key \
+            --password-stdin \
+            cr.yandex || {
+            echo "⚠️ Авторизация не удалась, пропускаем Container Registry"
+            rm -f key.json
+            exit 0
+          }
+          
+          rm -f key.json
+          echo "✅ Успешно авторизовались в Container Registry"
+          
+      - name: "Тегирование для Container Registry"
+        run: |
+          VERSION=${{ github.event.inputs.release_version }}
+          FIX_TAG=${{ steps.set-fix-tag.outputs.tag }}
+          REGISTRY_ID="${{ secrets.YC_REGISTRY_ID }}"
+          
+          echo "Тегируем образы для Container Registry..."
+          docker tag shri-app:$FIX_TAG cr.yandex/$REGISTRY_ID/app:$FIX_TAG
+          docker tag shri-app:$FIX_TAG cr.yandex/$REGISTRY_ID/app:${VERSION}_latest
+          
+          echo "✅ Образы перетегированы:"
+          echo "  - cr.yandex/$REGISTRY_ID/app:$FIX_TAG" 
+          echo "  - cr.yandex/$REGISTRY_ID/app:${VERSION}_latest"
+          
+      - name: "Загрузка в Container Registry"
+        run: |
+          VERSION=${{ github.event.inputs.release_version }}
+          FIX_TAG=${{ steps.set-fix-tag.outputs.tag }}
+          REGISTRY_ID="${{ secrets.YC_REGISTRY_ID }}"
+          
+          echo "Загружаем образы в Container Registry..."
+          
+          if docker push cr.yandex/$REGISTRY_ID/app:$FIX_TAG; then
+            echo "✅ Образ cr.yandex/$REGISTRY_ID/app:$FIX_TAG загружен"
+          else
+            echo "⚠️ Не удалось загрузить образ с тегом $FIX_TAG"
+          fi
+          
+          if docker push cr.yandex/$REGISTRY_ID/app:${VERSION}_latest; then
+            echo "✅ Образ cr.yandex/$REGISTRY_ID/app:${VERSION}_latest загружен"
+          else
+            echo "⚠️ Не удалось загрузить latest образ"
+          fi
+
+  create-fix-tag:
+    needs: [build-and-push-fix]
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Скачать код"
+        uses: actions/checkout@v4
+        with:
+          ref: releases/${{ github.event.inputs.release_version }}
+          fetch-depth: 0
+      - name: "Создать Git тег для фикса"
+        run: |
+          FIX_TAG=${{ needs.build-and-push-fix.outputs.fix-tag }}
+          echo "Создаю тег: $FIX_TAG"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag $FIX_TAG
+          git push origin $FIX_TAG
+          echo "Тег $FIX_TAG создан и отправлен"
+
+  add-issue-comment:
+    needs: [build-and-push-fix, create-fix-tag]
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Скачать код"
+        uses: actions/checkout@v4
+        with:
+          ref: releases/${{ github.event.inputs.release_version }}
+          fetch-depth: 0
+          
+      - name: "Получить список коммитов от предыдущего тега"
+        id: get-commits
+        run: |
+          VERSION=${{ github.event.inputs.release_version }}
+          echo "Получаю коммиты для фикса версии $VERSION"
+          
+          # Ищем предыдущий релизный или фикс тег для этой версии
+          PREV_TAG=$(git tag -l | grep -E "^${VERSION}(_fix[0-9]+)?$" | sort -V | tail -2 | head -1)
+          
+          if [ -z "$PREV_TAG" ]; then
+            # Если нет предыдущих фикс тегов, ищем базовый релизный тег
+            PREV_TAG=$(git tag -l | grep -E "^${VERSION}$" | head -1)
+          fi
+          
+          if [ -z "$PREV_TAG" ]; then
+            echo "Первый фикс - берём все коммиты в релизной ветке"
+            COMMITS=$(git log --oneline --pretty=format:"- %s (%h)")
+          else
+            echo "Предыдущий тег: $PREV_TAG"
+            COMMITS=$(git log ${PREV_TAG}..HEAD --oneline --pretty=format:"- %s (%h)")
+          fi
+          
+          echo "commits<<EOF" >> $GITHUB_OUTPUT
+          echo "$COMMITS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          
+      - name: "Найти Issue релиза"
+        id: find-issue
+        run: |
+          VERSION=${{ github.event.inputs.release_version }}
+          echo "Ищу Issue для релиза $VERSION"
+          
+          # Ищем Issue с заголовком "Релиз <версия>"
+          ISSUE_NUMBER=$(gh issue list --state all --limit 100 --json number,title | jq -r --arg title "Релиз $VERSION" '.[] | select(.title == $title) | .number')
+          
+          if [ -n "$ISSUE_NUMBER" ]; then
+            echo "issue_number=$ISSUE_NUMBER" >> $GITHUB_OUTPUT
+            echo "Найден Issue #$ISSUE_NUMBER для релиза $VERSION"
+          else
+            echo "issue_number=" >> $GITHUB_OUTPUT
+            echo "Issue для релиза $VERSION не найден"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: "Добавить комментарий в Issue"
+        if: steps.find-issue.outputs.issue_number != ''
+        run: |
+          VERSION=${{ github.event.inputs.release_version }}
+          FIX_TAG=${{ needs.build-and-push-fix.outputs.fix-tag }}
+          DATE=$(date '+%Y-%m-%d %H:%M:%S')
+          AUTHOR="${{ github.actor }}"
+          ISSUE_NUMBER=${{ steps.find-issue.outputs.issue_number }}
+          
+          cat > comment_body.md << EOF
+          ## 🔧 Фикс $FIX_TAG
+          
+          **Дата фикса:** $DATE  
+          **Автор фикса:** @$AUTHOR  
+          
+          ### Docker образ:
+          \`cr.yandex/${{ secrets.YC_REGISTRY_ID }}/app:$FIX_TAG\`
+          
+          ### Изменения в фиксе:
+          ${{ steps.get-commits.outputs.commits }}
+          EOF
+          
+          echo "Добавляю комментарий в Issue #$ISSUE_NUMBER для фикса $FIX_TAG"
+          gh issue comment $ISSUE_NUMBER --body-file comment_body.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

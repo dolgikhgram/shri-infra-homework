@@ -1,0 +1,206 @@
+name: "Деплой"
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: 'Версия релиза для деплоя'
+        required: true
+        type: string
+
+jobs:
+  check-image-exists:
+    runs-on: ubuntu-latest
+    outputs:
+      image-exists: ${{ steps.check-image.outputs.exists }}
+    steps:
+      - name: "Авторизация в Container Registry"
+        run: |
+          printf '%s\n' '${{ secrets.YC_SERVICE_ACCOUNT_KEY }}' | sed 's/\\\\n/\n/g' > key.json
+          
+          if jq empty key.json 2>/dev/null; then
+            echo "✅ JSON ключ валиден"
+          else
+            echo "❌ JSON невалиден"
+            rm -f key.json
+            exit 1
+          fi
+          
+          cat key.json | docker login \
+            --username json_key \
+            --password-stdin \
+            cr.yandex || {
+            echo "❌ Авторизация не удалась"
+            rm -f key.json
+            exit 1
+          }
+          
+          rm -f key.json
+          echo "✅ Успешно авторизовались в Container Registry"
+          
+      - name: "Проверить существование образа"
+        id: check-image
+        run: |
+          VERSION=${{ github.event.inputs.release_version }}
+          REGISTRY_ID="${{ secrets.YC_REGISTRY_ID }}"
+          IMAGE_TAG="cr.yandex/$REGISTRY_ID/app:${VERSION}_latest"
+          
+          echo "Проверяю существование образа: $IMAGE_TAG"
+          
+          # Попробуем скачать манифест образа
+          if docker manifest inspect $IMAGE_TAG >/dev/null 2>&1; then
+            echo "✅ Образ $IMAGE_TAG существует"
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Образ $IMAGE_TAG не найден"
+            echo "exists=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+  deploy-to-server:
+    needs: check-image-exists
+    runs-on: ubuntu-latest
+    if: needs.check-image-exists.outputs.image-exists == 'true'
+    steps:
+      - name: "Деплой на сервер через SSH"
+        run: |
+          VERSION=${{ github.event.inputs.release_version }}
+          REGISTRY_ID="${{ secrets.YC_REGISTRY_ID }}"
+          IMAGE_TAG="cr.yandex/$REGISTRY_ID/app:${VERSION}_latest"
+          
+          echo "Начинаю деплой образа $IMAGE_TAG на сервер"
+          
+          # Создаем SSH ключ
+          echo "${{ secrets.SERVER_SSH_KEY }}" > ssh_key
+          chmod 600 ssh_key
+          
+          # Создаем скрипт деплоя
+          cat > deploy_script.sh << 'EOF'
+          #!/bin/bash
+          set -e
+          
+          VERSION="$1"
+          REGISTRY_ID="$2"
+          YC_SERVICE_ACCOUNT_KEY="$3"
+          IMAGE_TAG="cr.yandex/$REGISTRY_ID/app:${VERSION}_latest"
+          
+          echo "=== Деплой версии $VERSION ==="
+          echo "Образ: $IMAGE_TAG"
+          
+          # Авторизация в Container Registry
+          echo "Авторизуемся в Container Registry..."
+          printf '%s\n' "$YC_SERVICE_ACCOUNT_KEY" | sed 's/\\\\n/\n/g' > /tmp/key.json
+          
+          if ! jq empty /tmp/key.json 2>/dev/null; then
+            echo "❌ Невалидный JSON ключ"
+            rm -f /tmp/key.json
+            exit 1
+          fi
+          
+          sudo cat /tmp/key.json | sudo docker login \
+            --username json_key \
+            --password-stdin \
+            cr.yandex
+          
+          rm -f /tmp/key.json
+          echo "✅ Авторизация успешна"
+          
+          # Остановка старого контейнера
+          echo "Останавливаю старый контейнер..."
+          sudo docker stop shri-app 2>/dev/null || echo "Контейнер не запущен"
+          sudo docker rm shri-app 2>/dev/null || echo "Контейнер не существует"
+          
+          # Скачивание нового образа
+          echo "Скачиваю новый образ..."
+          sudo docker pull "$IMAGE_TAG"
+          
+          # Запуск нового контейнера
+          echo "Запускаю новый контейнер..."
+          sudo docker run -d \
+            --name shri-app \
+            --restart unless-stopped \
+            -p 3000:3000 \
+            "$IMAGE_TAG"
+          
+          # Проверка что контейнер запустился
+          sleep 5
+          if sudo docker ps | grep shri-app; then
+            echo "✅ Контейнер успешно запущен"
+            echo "🌐 Приложение доступно на порту 3000"
+          else
+            echo "❌ Ошибка запуска контейнера"
+            sudo docker logs shri-app || true
+            exit 1
+          fi
+          
+          echo "✅ Деплой завершен успешно"
+          EOF
+          
+          chmod +x deploy_script.sh
+          
+          # Выполняем деплой через SSH
+          ssh -i ssh_key \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
+            'bash -s' < deploy_script.sh \
+            "$VERSION" \
+            "$REGISTRY_ID" \
+            "${{ secrets.YC_SERVICE_ACCOUNT_KEY }}"
+          
+          # Очистка
+          rm -f ssh_key deploy_script.sh
+          
+          echo "🎉 Деплой версии $VERSION завершен!"
+
+  add-deploy-comment:
+    needs: [deploy-to-server]
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Скачать код для доступа к GitHub CLI"
+        uses: actions/checkout@v4
+        
+      - name: "Найти Issue релиза"
+        id: find-issue
+        run: |
+          VERSION=${{ github.event.inputs.release_version }}
+          echo "Ищу Issue для релиза $VERSION"
+          
+          # Ищем Issue с заголовком "Релиз <версия>"
+          ISSUE_NUMBER=$(gh issue list --state all --limit 100 --json number,title | jq -r --arg title "Релиз $VERSION" '.[] | select(.title == $title) | .number')
+          
+          if [ -n "$ISSUE_NUMBER" ]; then
+            echo "issue_number=$ISSUE_NUMBER" >> $GITHUB_OUTPUT
+            echo "Найден Issue #$ISSUE_NUMBER для релиза $VERSION"
+          else
+            echo "issue_number=" >> $GITHUB_OUTPUT
+            echo "Issue для релиза $VERSION не найден"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: "Добавить комментарий о деплое"
+        if: steps.find-issue.outputs.issue_number != ''
+        run: |
+          VERSION=${{ github.event.inputs.release_version }}
+          DATE=$(date '+%Y-%m-%d %H:%M:%S')
+          AUTHOR="${{ github.actor }}"
+          ISSUE_NUMBER=${{ steps.find-issue.outputs.issue_number }}
+          SERVER_IP="${{ secrets.SERVER_HOST }}"
+          
+          cat > deploy_comment.md << EOF
+          ## 🚀 Деплой в продакшн
+          
+          **Дата деплоя:** $DATE  
+          **Деплоил:** @$AUTHOR  
+          **Версия:** $VERSION  
+          
+          ✅ Релиз успешно развернут на сервере!
+          
+          🌐 **Приложение доступно по адресу:** http://$SERVER_IP:3000/hw/store
+          EOF
+          
+          echo "Добавляю комментарий о деплое в Issue #$ISSUE_NUMBER"
+          gh issue comment $ISSUE_NUMBER --body-file deploy_comment.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

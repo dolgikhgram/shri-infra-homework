@@ -68,6 +68,7 @@ https://yandex.cloud/ru/docs/compute/quickstart/quick-create-linux#create-vm
     - создаёт Issue в GitHub, которое содержит всю важную информацию:
         - дату,
         - автора релиза (тот, кто запустил флоу),
+        
         - номер версии (`${{ github.run_number }}`),
         - список коммитов от предыдущего релизного (или фиксрелизного) тега,
         - ссылку на docker-образом в Yandex Container Registry\
