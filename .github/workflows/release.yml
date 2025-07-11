@@ -66,9 +66,14 @@ jobs:
           echo "$HOME/yandex-cloud/bin" >> $GITHUB_PATH
           
       - name: "Авторизация через Yandex Cloud CLI"
+        env:
+          YC_SERVICE_ACCOUNT_KEY: ${{ secrets.YC_SERVICE_ACCOUNT_KEY }}
         run: |
-          # Сохраняем JSON-ключ во временный файл  
-          echo '${{ secrets.YC_SERVICE_ACCOUNT_KEY }}' > key.json
+          # Сохраняем JSON-ключ через переменную окружения
+          echo "$YC_SERVICE_ACCOUNT_KEY" > key.json
+          
+          # Проверяем JSON
+          echo "JSON ключ создан, размер файла: $(wc -c < key.json) байт"
           
           # Авторизуемся через yc cli
           yc config profile create github-actions
