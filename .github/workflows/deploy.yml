@@ -16,7 +16,16 @@ jobs:
     steps:
       - name: "Авторизация в Container Registry"
         run: |
+          # Используем printf для правильной обработки escape-последовательностей
           printf '%s\n' '${{ secrets.YC_SERVICE_ACCOUNT_KEY }}' | sed 's/\\\\n/\n/g' > key.json
+          
+          # Проверяем, что файл валидный JSON
+          echo "Проверяем JSON ключ..."
+          echo "Размер файла: $(wc -c < key.json) байт"
+          echo "Первые символы файла:"
+          head -c 150 key.json
+          echo ""
+          echo "Проверяем валидность JSON..."
           
           if jq empty key.json 2>/dev/null; then
             echo "✅ JSON ключ валиден"
@@ -26,6 +35,7 @@ jobs:
             exit 1
           fi
           
+          # Попробуем авторизацию через json_key
           cat key.json | docker login \
             --username json_key \
             --password-stdin \
@@ -62,6 +72,19 @@ jobs:
     runs-on: ubuntu-latest
     if: needs.check-image-exists.outputs.image-exists == 'true'
     steps:
+      - name: "Подготовка ключа для передачи"
+        run: |
+          # Создаем JSON ключ локально 
+          printf '%s\n' '${{ secrets.YC_SERVICE_ACCOUNT_KEY }}' | sed 's/\\\\n/\n/g' > yc_key.json
+          
+          # Проверяем валидность
+          if jq empty yc_key.json 2>/dev/null; then
+            echo "✅ JSON ключ валиден для передачи"
+          else
+            echo "❌ JSON ключ невалиден"
+            exit 1
+          fi
+          
       - name: "Деплой на сервер через SSH"
         run: |
           VERSION="${{ github.event.inputs.release_version }}"
@@ -74,29 +97,40 @@ jobs:
           echo "${{ secrets.SERVER_SSH_KEY }}" > ssh_key
           chmod 600 ssh_key
           
+          # Передаем JSON ключ через файл
+          scp -i ssh_key \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            yc_key.json \
+            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/yc_key.json
+          
           # Выполняем деплой через SSH
           ssh -i ssh_key \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
-            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << EOF
+            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << DEPLOY_EOF
           set -e
           
           VERSION="${VERSION}"
           REGISTRY_ID="${REGISTRY_ID}"
-          IMAGE_TAG="cr.yandex/\${REGISTRY_ID}/app:\${VERSION}_latest"
+          IMAGE_TAG="${IMAGE_TAG}"
           
           echo "=== Деплой версии \$VERSION ==="
           echo "Образ: \$IMAGE_TAG"
           
-          # Создаем временный файл для ключа
-          echo '${{ secrets.YC_SERVICE_ACCOUNT_KEY }}' | sed 's/\\\\n/\n/g' > /tmp/yc_key.json
+          # Проверяем валидность JSON (устанавливаем jq если нужно)
+          if ! command -v jq &> /dev/null; then
+            echo "Устанавливаю jq..."
+            sudo apt-get update -qq && sudo apt-get install -y jq
+          fi
           
-          # Проверяем валидность JSON
           if ! jq empty /tmp/yc_key.json 2>/dev/null; then
-            echo "❌ Невалидный JSON ключ"
+            echo "❌ Невалидный JSON ключ на сервере"
             rm -f /tmp/yc_key.json
             exit 1
           fi
+          
+          echo "✅ JSON ключ валиден на сервере"
           
           # Авторизация в Container Registry
           echo "Авторизуемся в Container Registry..."
@@ -137,10 +171,10 @@ jobs:
           fi
           
           echo "✅ Деплой завершен успешно"
-          EOF
+          DEPLOY_EOF
           
-          # Очистка
-          rm -f ssh_key
+          # Очистка локальных файлов
+          rm -f ssh_key yc_key.json
           
           echo "🎉 Деплой версии $VERSION завершен!"
 
