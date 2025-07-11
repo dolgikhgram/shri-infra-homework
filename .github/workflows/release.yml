@@ -60,12 +60,26 @@ jobs:
           docker build -t shri-app:$VERSION .
           echo "Образ собран с тегом: $VERSION"
           
-      - name: "Авторизация в Yandex Container Registry"
+      - name: "Установка Yandex Cloud CLI"
         run: |
-          echo '${{ secrets.YC_SERVICE_ACCOUNT_KEY }}' | docker login \
-            --username json_key \
-            --password-stdin \
-            cr.yandex
+          curl -sSL https://storage.yandexcloud.net/yandexcloud-yc/install.sh | bash
+          echo "$HOME/yandex-cloud/bin" >> $GITHUB_PATH
+          
+      - name: "Авторизация через Yandex Cloud CLI"
+        run: |
+          # Сохраняем JSON-ключ во временный файл  
+          echo '${{ secrets.YC_SERVICE_ACCOUNT_KEY }}' > key.json
+          
+          # Авторизуемся через yc cli
+          yc config profile create github-actions
+          yc config set service-account-key key.json
+          
+          # Авторизуемся в Container Registry
+          yc container registry configure-docker
+          
+          # Удаляем временный файл
+          rm key.json
+          
           echo "Успешно авторизовались в Yandex Container Registry"
           
       - name: "Тегирование для Yandex Container Registry"
