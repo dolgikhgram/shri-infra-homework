@@ -71,19 +71,36 @@ jobs:
           # Попробуем простую авторизацию через docker login  
           echo "Авторизуемся в Container Registry..."
           
-          # Сохраняем JSON в файл с правильными переносами строк
-          echo '${{ secrets.YC_SERVICE_ACCOUNT_KEY }}' | sed 's/\\n/\n/g' > key.json
+          # Используем printf для правильной обработки escape-последовательностей
+          printf '%s\n' '${{ secrets.YC_SERVICE_ACCOUNT_KEY }}' | sed 's/\\\\n/\n/g' > key.json
           
           # Проверяем, что файл валидный JSON
           echo "Проверяем JSON ключ..."
-          if jq . key.json > /dev/null 2>&1; then
+          echo "Размер файла: $(wc -c < key.json) байт"
+          echo "Первые символы файла:"
+          head -c 150 key.json
+          echo ""
+          echo "Проверяем валидность JSON..."
+          
+          if jq empty key.json 2>/dev/null; then
             echo "✅ JSON ключ валиден"
           else
-            echo "❌ JSON ключ невалиден, показываем первые символы:"
-            head -c 200 key.json
-            echo "⚠️ Пропускаем авторизацию"
-            rm -f key.json
-            exit 0
+            echo "❌ JSON всё еще невалиден, пробуем альтернативный метод..."
+            
+            # Альтернатива: python для обработки JSON
+            python3 -c "
+import json
+import sys
+data = '''${{ secrets.YC_SERVICE_ACCOUNT_KEY }}'''
+try:
+    parsed = json.loads(data)
+    with open('key.json', 'w') as f:
+        json.dump(parsed, f, indent=2)
+    print('✅ JSON обработан через Python')
+except Exception as e:
+    print(f'❌ Python тоже не помог: {e}')
+    sys.exit(1)
+"
           fi
           
           # Попробуем авторизацию через json_key
