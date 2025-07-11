@@ -66,6 +66,8 @@ jobs:
           echo "=== ОТЛАДОЧНАЯ ИНФОРМАЦИЯ ==="
           echo "Версия релиза: $VERSION"
           echo "Registry ID: ${{ secrets.YC_REGISTRY_ID }}"
+          echo "Registry ID длина: $(echo '${{ secrets.YC_REGISTRY_ID }}' | wc -c) символов"
+          echo "Проверяем Registry ID: [$(echo '${{ secrets.YC_REGISTRY_ID }}' | head -c 50)]"
           echo "============================="
           
           # Попробуем простую авторизацию через docker login  
@@ -122,6 +124,10 @@ jobs:
           REGISTRY_ID="${{ secrets.YC_REGISTRY_ID }}"
           
           echo "Загружаем образы в Container Registry..."
+          echo "Проверяем переменные перед push:"
+          echo "REGISTRY_ID: [$REGISTRY_ID]"
+          echo "VERSION: [$VERSION]"
+          echo "Полный путь образа: [cr.yandex/$REGISTRY_ID/app:$VERSION]"
           
           # Пробуем загрузить, но не падаем при ошибке
           if docker push cr.yandex/$REGISTRY_ID/app:$VERSION; then
