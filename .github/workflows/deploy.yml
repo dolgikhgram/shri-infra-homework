@@ -1,4 +1,4 @@
-name: "Деплой"
+name: "Деплой в продакшн"
 
 on:
   workflow_dispatch:
@@ -64,9 +64,9 @@ jobs:
     steps:
       - name: "Деплой на сервер через SSH"
         run: |
-          VERSION=${{ github.event.inputs.release_version }}
+          VERSION="${{ github.event.inputs.release_version }}"
           REGISTRY_ID="${{ secrets.YC_REGISTRY_ID }}"
-          IMAGE_TAG="cr.yandex/$REGISTRY_ID/app:${VERSION}_latest"
+          IMAGE_TAG="cr.yandex/${REGISTRY_ID}/app:${VERSION}_latest"
           
           echo "Начинаю деплой образа $IMAGE_TAG на сервер"
           
@@ -74,35 +74,38 @@ jobs:
           echo "${{ secrets.SERVER_SSH_KEY }}" > ssh_key
           chmod 600 ssh_key
           
-          # Создаем скрипт деплоя
-          cat > deploy_script.sh << 'EOF'
-          #!/bin/bash
+          # Выполняем деплой через SSH
+          ssh -i ssh_key \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << EOF
           set -e
           
-          VERSION="$1"
-          REGISTRY_ID="$2"
-          YC_SERVICE_ACCOUNT_KEY="$3"
-          IMAGE_TAG="cr.yandex/$REGISTRY_ID/app:${VERSION}_latest"
+          VERSION="${VERSION}"
+          REGISTRY_ID="${REGISTRY_ID}"
+          IMAGE_TAG="cr.yandex/\${REGISTRY_ID}/app:\${VERSION}_latest"
           
-          echo "=== Деплой версии $VERSION ==="
-          echo "Образ: $IMAGE_TAG"
+          echo "=== Деплой версии \$VERSION ==="
+          echo "Образ: \$IMAGE_TAG"
           
-          # Авторизация в Container Registry
-          echo "Авторизуемся в Container Registry..."
-          printf '%s\n' "$YC_SERVICE_ACCOUNT_KEY" | sed 's/\\\\n/\n/g' > /tmp/key.json
+          # Создаем временный файл для ключа
+          echo '${{ secrets.YC_SERVICE_ACCOUNT_KEY }}' | sed 's/\\\\n/\n/g' > /tmp/yc_key.json
           
-          if ! jq empty /tmp/key.json 2>/dev/null; then
+          # Проверяем валидность JSON
+          if ! jq empty /tmp/yc_key.json 2>/dev/null; then
             echo "❌ Невалидный JSON ключ"
-            rm -f /tmp/key.json
+            rm -f /tmp/yc_key.json
             exit 1
           fi
           
-          sudo cat /tmp/key.json | sudo docker login \
+          # Авторизация в Container Registry
+          echo "Авторизуемся в Container Registry..."
+          sudo cat /tmp/yc_key.json | sudo docker login \
             --username json_key \
             --password-stdin \
             cr.yandex
           
-          rm -f /tmp/key.json
+          rm -f /tmp/yc_key.json
           echo "✅ Авторизация успешна"
           
           # Остановка старого контейнера
@@ -112,7 +115,7 @@ jobs:
           
           # Скачивание нового образа
           echo "Скачиваю новый образ..."
-          sudo docker pull "$IMAGE_TAG"
+          sudo docker pull "\$IMAGE_TAG"
           
           # Запуск нового контейнера
           echo "Запускаю новый контейнер..."
@@ -120,7 +123,7 @@ jobs:
             --name shri-app \
             --restart unless-stopped \
             -p 3000:3000 \
-            "$IMAGE_TAG"
+            "\$IMAGE_TAG"
           
           # Проверка что контейнер запустился
           sleep 5
@@ -136,20 +139,8 @@ jobs:
           echo "✅ Деплой завершен успешно"
           EOF
           
-          chmod +x deploy_script.sh
-          
-          # Выполняем деплой через SSH
-          ssh -i ssh_key \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-            'bash -s' < deploy_script.sh \
-            "$VERSION" \
-            "$REGISTRY_ID" \
-            "${{ secrets.YC_SERVICE_ACCOUNT_KEY }}"
-          
           # Очистка
-          rm -f ssh_key deploy_script.sh
+          rm -f ssh_key
           
           echo "🎉 Деплой версии $VERSION завершен!"
 
