@@ -129,8 +129,7 @@ jobs:
           echo "Создаю GitHub Issue для релиза $VERSION"
           gh issue create \
             --title "Релиз $VERSION" \
-            --body-file issue_body.md \
-            --label "release"
+            --body-file issue_body.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   update-changelog:
