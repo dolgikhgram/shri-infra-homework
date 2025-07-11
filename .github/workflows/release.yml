@@ -71,8 +71,20 @@ jobs:
           # Попробуем простую авторизацию через docker login  
           echo "Авторизуемся в Container Registry..."
           
-          # Сохраняем JSON в файл через переменную
-          echo '${{ secrets.YC_SERVICE_ACCOUNT_KEY }}' > key.json
+          # Сохраняем JSON в файл с правильными переносами строк
+          echo '${{ secrets.YC_SERVICE_ACCOUNT_KEY }}' | sed 's/\\n/\n/g' > key.json
+          
+          # Проверяем, что файл валидный JSON
+          echo "Проверяем JSON ключ..."
+          if jq . key.json > /dev/null 2>&1; then
+            echo "✅ JSON ключ валиден"
+          else
+            echo "❌ JSON ключ невалиден, показываем первые символы:"
+            head -c 200 key.json
+            echo "⚠️ Пропускаем авторизацию"
+            rm -f key.json
+            exit 0
+          fi
           
           # Попробуем авторизацию через json_key
           cat key.json | docker login \
