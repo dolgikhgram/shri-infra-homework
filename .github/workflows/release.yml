@@ -3,6 +3,11 @@ name: "Создание релиза"
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
@@ -229,11 +234,25 @@ jobs:
           # Заменяем старый файл
           mv new_changelog.md CHANGELOG.md
           
-      - name: "Закоммитить изменения в CHANGELOG"
+      - name: "Создать PR для обновления CHANGELOG"
         run: |
           VERSION=${{ needs.create-release-branch.outputs.release-version }}
+          BRANCH_NAME="changelog-update-$VERSION"
+          
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Создаем новую ветку для обновления CHANGELOG
+          git checkout -b $BRANCH_NAME
           git add CHANGELOG.md
           git commit -m "docs: обновить CHANGELOG.md для версии $VERSION"
-          git push origin main
+          git push origin $BRANCH_NAME
+          
+          # Создаем PR
+          gh pr create \
+            --title "docs: обновить CHANGELOG.md для версии $VERSION" \
+            --body "Автоматическое обновление CHANGELOG.md для релиза $VERSION" \
+            --head $BRANCH_NAME \
+            --base main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
