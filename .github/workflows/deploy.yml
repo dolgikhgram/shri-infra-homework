@@ -20,17 +20,11 @@ jobs:
           printf '%s\n' '${{ secrets.YC_SERVICE_ACCOUNT_KEY }}' | sed 's/\\\\n/\n/g' > key.json
           
           # Проверяем, что файл валидный JSON
-          echo "Проверяем JSON ключ..."
-          echo "Размер файла: $(wc -c < key.json) байт"
-          echo "Первые символы файла:"
-          head -c 150 key.json
-          echo ""
-          echo "Проверяем валидность JSON..."
-          
           if jq empty key.json 2>/dev/null; then
-            echo "✅ JSON ключ валиден"
+            # JSON ключ валиден
+            :
           else
-            echo "❌ JSON невалиден"
+            # JSON невалиден
             rm -f key.json
             exit 1
           fi
@@ -40,13 +34,13 @@ jobs:
             --username json_key \
             --password-stdin \
             cr.yandex || {
-            echo "❌ Авторизация не удалась"
+            # Авторизация не удалась
             rm -f key.json
             exit 1
           }
           
           rm -f key.json
-          echo "✅ Успешно авторизовались в Container Registry"
+          # Успешно авторизовались в Container Registry
           
       - name: "Проверить существование образа"
         id: check-image
@@ -55,14 +49,12 @@ jobs:
           REGISTRY_ID="${{ secrets.YC_REGISTRY_ID }}"
           IMAGE_TAG="cr.yandex/$REGISTRY_ID/app:${VERSION}_latest"
           
-          echo "Проверяю существование образа: $IMAGE_TAG"
-          
           # Попробуем скачать манифест образа
           if docker manifest inspect $IMAGE_TAG >/dev/null 2>&1; then
-            echo "✅ Образ $IMAGE_TAG существует"
+            # Образ существует
             echo "exists=true" >> $GITHUB_OUTPUT
           else
-            echo "❌ Образ $IMAGE_TAG не найден"
+            # Образ не найден
             echo "exists=false" >> $GITHUB_OUTPUT
             exit 1
           fi
@@ -79,9 +71,10 @@ jobs:
           
           # Проверяем валидность
           if jq empty yc_key.json 2>/dev/null; then
-            echo "✅ JSON ключ валиден для передачи"
+            # JSON ключ валиден для передачи
+            :
           else
-            echo "❌ JSON ключ невалиден"
+            # JSON ключ невалиден
             exit 1
           fi
           
@@ -91,7 +84,7 @@ jobs:
           REGISTRY_ID="${{ secrets.YC_REGISTRY_ID }}"
           IMAGE_TAG="cr.yandex/${REGISTRY_ID}/app:${VERSION}_latest"
           
-          echo "Начинаю деплой образа $IMAGE_TAG на сервер"
+          # Начинаю деплой образа $IMAGE_TAG на сервер
           
           # Создаем SSH ключ
           echo "${{ secrets.SERVER_SSH_KEY }}" > ssh_key
@@ -115,57 +108,43 @@ jobs:
           REGISTRY_ID="${REGISTRY_ID}"
           IMAGE_TAG="${IMAGE_TAG}"
           
-          echo "=== Деплой версии \$VERSION ==="
-          echo "Образ: \$IMAGE_TAG"
-          
           # Проверяем валидность JSON (устанавливаем jq если нужно)
           if ! command -v jq &> /dev/null; then
-            echo "Устанавливаю jq..."
             sudo apt-get update -qq && sudo apt-get install -y jq
           fi
           
           # Проверяем и устанавливаем Docker если нужно
           if ! command -v docker &> /dev/null; then
-            echo "Устанавливаю Docker..."
             sudo apt-get update -qq
             sudo apt-get install -y docker.io
             sudo systemctl start docker
             sudo systemctl enable docker
             sudo usermod -aG docker \$USER
-            echo "✅ Docker установлен"
-          else
-            echo "✅ Docker уже установлен"
           fi
           
           if ! jq empty /tmp/yc_key.json 2>/dev/null; then
-            echo "❌ Невалидный JSON ключ на сервере"
+            # Невалидный JSON ключ на сервере
             rm -f /tmp/yc_key.json
             exit 1
           fi
           
-          echo "✅ JSON ключ валиден на сервере"
-          
           # Авторизация в Container Registry
-          echo "Авторизуемся в Container Registry..."
           sudo cat /tmp/yc_key.json | sudo docker login \
             --username json_key \
             --password-stdin \
             cr.yandex
           
           rm -f /tmp/yc_key.json
-          echo "✅ Авторизация успешна"
+          # Авторизация успешна
           
           # Остановка старого контейнера
-          echo "Останавливаю старый контейнер..."
-          sudo docker stop shri-app 2>/dev/null || echo "Контейнер не запущен"
-          sudo docker rm shri-app 2>/dev/null || echo "Контейнер не существует"
+          sudo docker stop shri-app 2>/dev/null || true
+          sudo docker rm shri-app 2>/dev/null || true
           
           # Скачивание нового образа
-          echo "Скачиваю новый образ..."
           sudo docker pull "\$IMAGE_TAG"
           
           # Запуск нового контейнера
-          echo "Запускаю новый контейнер..."
           sudo docker run -d \
             --name shri-app \
             --restart unless-stopped \
@@ -175,21 +154,17 @@ jobs:
           # Проверка что контейнер запустился
           sleep 5
           if sudo docker ps | grep shri-app; then
-            echo "✅ Контейнер успешно запущен"
-            echo "🌐 Приложение доступно на порту 3000"
+            # Контейнер успешно запущен
+            :
           else
-            echo "❌ Ошибка запуска контейнера"
+            # Ошибка запуска контейнера
             sudo docker logs shri-app || true
             exit 1
           fi
-          
-          echo "✅ Деплой завершен успешно"
           DEPLOY_EOF
           
           # Очистка локальных файлов
           rm -f ssh_key yc_key.json
-          
-          echo "🎉 Деплой версии $VERSION завершен!"
 
   add-deploy-comment:
     needs: [deploy-to-server]
@@ -202,17 +177,14 @@ jobs:
         id: find-issue
         run: |
           VERSION=${{ github.event.inputs.release_version }}
-          echo "Ищу Issue для релиза $VERSION"
           
           # Ищем Issue с заголовком "Релиз <версия>"
           ISSUE_NUMBER=$(gh issue list --state all --limit 100 --json number,title | jq -r --arg title "Релиз $VERSION" '.[] | select(.title == $title) | .number')
           
           if [ -n "$ISSUE_NUMBER" ]; then
             echo "issue_number=$ISSUE_NUMBER" >> $GITHUB_OUTPUT
-            echo "Найден Issue #$ISSUE_NUMBER для релиза $VERSION"
           else
             echo "issue_number=" >> $GITHUB_OUTPUT
-            echo "Issue для релиза $VERSION не найден"
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -233,12 +205,11 @@ jobs:
           **Деплоил:** @$AUTHOR  
           **Версия:** $VERSION  
           
-          ✅ Релиз успешно развернут на сервере!
+          Релиз успешно развернут на сервере!
           
-          🌐 **Приложение доступно по адресу:** http://$SERVER_IP:3000/hw/store
+          **Приложение доступно по адресу:** http://$SERVER_IP:3000/hw/store
           EOF
           
-          echo "Добавляю комментарий о деплое в Issue #$ISSUE_NUMBER"
           gh issue comment $ISSUE_NUMBER --body-file deploy_comment.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

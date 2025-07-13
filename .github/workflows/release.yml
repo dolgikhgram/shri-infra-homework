@@ -36,7 +36,6 @@ jobs:
         run: |
           VERSION=${{ github.run_number }}
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Версия релиза: $VERSION"
       
       - name: "Создать релизную ветку"
         run: |
@@ -58,36 +57,22 @@ jobs:
         run: |
           VERSION=${{ needs.create-release-branch.outputs.release-version }}
           docker build -t shri-app:$VERSION .
-          echo "Образ собран с тегом: $VERSION"
           
       - name: "Авторизация в Container Registry (упрощенный способ)"
         run: |
           VERSION=${{ needs.create-release-branch.outputs.release-version }}
-          echo "=== ОТЛАДОЧНАЯ ИНФОРМАЦИЯ ==="
-          echo "Версия релиза: $VERSION"
-          echo "Registry ID: ${{ secrets.YC_REGISTRY_ID }}"
-          echo "Registry ID длина: $(echo '${{ secrets.YC_REGISTRY_ID }}' | wc -c) символов"
-          echo "Проверяем Registry ID: [$(echo '${{ secrets.YC_REGISTRY_ID }}' | head -c 50)]"
-          echo "============================="
           
-          # Попробуем простую авторизацию через docker login  
-          echo "Авторизуемся в Container Registry..."
+          # Попробуем простую авторизацию через docker login
           
           # Используем printf для правильной обработки escape-последовательностей
           printf '%s\n' '${{ secrets.YC_SERVICE_ACCOUNT_KEY }}' | sed 's/\\\\n/\n/g' > key.json
           
           # Проверяем, что файл валидный JSON
-          echo "Проверяем JSON ключ..."
-          echo "Размер файла: $(wc -c < key.json) байт"
-          echo "Первые символы файла:"
-          head -c 150 key.json
-          echo ""
-          echo "Проверяем валидность JSON..."
-          
           if jq empty key.json 2>/dev/null; then
-            echo "✅ JSON ключ валиден"
+            # JSON ключ валиден
+            :
           else
-            echo "❌ JSON невалиден, пропускаем Container Registry"
+            # JSON невалиден, пропускаем Container Registry
             rm -f key.json
             exit 0
           fi
@@ -97,52 +82,33 @@ jobs:
             --username json_key \
             --password-stdin \
             cr.yandex || {
-            echo "⚠️ Авторизация не удалась, пропускаем Container Registry"
+            # Авторизация не удалась, пропускаем Container Registry
             rm -f key.json
             exit 0
           }
           
           rm -f key.json
-          echo "✅ Успешно авторизовались в Container Registry"
+          # Успешно авторизовались в Container Registry
           
       - name: "Тегирование для Container Registry"
         run: |
           VERSION=${{ needs.create-release-branch.outputs.release-version }}
           REGISTRY_ID="${{ secrets.YC_REGISTRY_ID }}"
           
-          echo "Тегируем образы для Container Registry..."
+          # Тегируем образы для Container Registry
           docker tag shri-app:$VERSION cr.yandex/$REGISTRY_ID/app:$VERSION
           docker tag shri-app:$VERSION cr.yandex/$REGISTRY_ID/app:${VERSION}_latest
-          
-          echo "✅ Образы перетегированы:"
-          echo "  - cr.yandex/$REGISTRY_ID/app:$VERSION" 
-          echo "  - cr.yandex/$REGISTRY_ID/app:${VERSION}_latest"
           
       - name: "Загрузка в Container Registry"
         run: |
           VERSION=${{ needs.create-release-branch.outputs.release-version }}
           REGISTRY_ID="${{ secrets.YC_REGISTRY_ID }}"
           
-          echo "Загружаем образы в Container Registry..."
-          echo "Проверяем переменные перед push:"
-          echo "REGISTRY_ID: [$REGISTRY_ID]"
-          echo "VERSION: [$VERSION]"
-          echo "Полный путь образа: [cr.yandex/$REGISTRY_ID/app:$VERSION]"
+          # Загружаем образы в Container Registry
           
           # Пробуем загрузить, но не падаем при ошибке
-          if docker push cr.yandex/$REGISTRY_ID/app:$VERSION; then
-            echo "✅ Образ cr.yandex/$REGISTRY_ID/app:$VERSION загружен"
-          else
-            echo "⚠️ Не удалось загрузить образ с версией $VERSION"
-          fi
-          
-          if docker push cr.yandex/$REGISTRY_ID/app:${VERSION}_latest; then
-            echo "✅ Образ cr.yandex/$REGISTRY_ID/app:${VERSION}_latest загружен"
-          else
-            echo "⚠️ Не удалось загрузить latest образ"
-          fi
-          
-          echo "🏁 Попытка загрузки в Container Registry завершена"
+          docker push cr.yandex/$REGISTRY_ID/app:$VERSION || true
+          docker push cr.yandex/$REGISTRY_ID/app:${VERSION}_latest || true
   create-git-tag:
     needs: [create-release-branch, build-and-push-docker]
     runs-on: ubuntu-latest
@@ -154,12 +120,10 @@ jobs:
       - name: "Создать Git тег"
         run: |
           VERSION=${{ needs.create-release-branch.outputs.release-version }}
-          echo "Создаю тег: $VERSION"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag $VERSION
-          git push origin $VERSION
-          echo "Тег $VERSION создан и отправлен"    
+          git push origin $VERSION    
   create-github-issue:
     needs: [create-release-branch, create-git-tag]
     runs-on: ubuntu-latest
@@ -173,16 +137,15 @@ jobs:
         id: get-commits
         run: |
           VERSION=${{ needs.create-release-branch.outputs.release-version }}
-          echo "Получаю коммиты для версии $VERSION"
           
           # Ищем предыдущий релизный тег
           PREV_TAG=$(git tag -l | grep -E '^[0-9]+(_fix[0-9]+)?$' | sort -V | tail -1)
           
           if [ -z "$PREV_TAG" ]; then
-            echo "Первый релиз - берём все коммиты"
+            # Первый релиз - берём все коммиты
             COMMITS=$(git log --oneline --pretty=format:"- %s (%h)")
           else
-            echo "Предыдущий тег: $PREV_TAG"
+            # Предыдущий тег: $PREV_TAG
             COMMITS=$(git log ${PREV_TAG}..HEAD --oneline --pretty=format:"- %s (%h)")
           fi
           
@@ -210,7 +173,6 @@ jobs:
           ${{ steps.get-commits.outputs.commits }}
           EOF
           
-          echo "Создаю GitHub Issue для релиза $VERSION"
           gh issue create \
             --title "Релиз $VERSION" \
             --body-file issue_body.md
@@ -223,23 +185,22 @@ jobs:
       - name: "Скачать код"
         uses: actions/checkout@v4
         with:
-          ref: releases/${{ needs.create-release-branch.outputs.release-version }}
+          ref: main
           fetch-depth: 0
           
       - name: "Получить список коммитов для CHANGELOG"
         id: get-changelog-commits
         run: |
           VERSION=${{ needs.create-release-branch.outputs.release-version }}
-          echo "Получаю коммиты для CHANGELOG версии $VERSION"
           
           # Ищем предыдущий релизный тег
           PREV_TAG=$(git tag -l | grep -E '^[0-9]+(_fix[0-9]+)?$' | sort -V | tail -1)
           
           if [ -z "$PREV_TAG" ]; then
-            echo "Первый релиз - берём все коммиты"
+            # Первый релиз - берём все коммиты
             COMMITS=$(git log --oneline --pretty=format:"- %s (%h)")
           else
-            echo "Предыдущий тег: $PREV_TAG"
+            # Предыдущий тег: $PREV_TAG
             COMMITS=$(git log ${PREV_TAG}..HEAD --oneline --pretty=format:"- %s (%h)")
           fi
           
@@ -251,8 +212,6 @@ jobs:
         run: |
           VERSION=${{ needs.create-release-branch.outputs.release-version }}
           DATE=$(date '+%Y-%m-%d')
-          
-          echo "Обновляю CHANGELOG.md для версии $VERSION"
           
           # Создаём временный файл с новой версией
           cat > new_changelog.md << EOF
@@ -270,8 +229,6 @@ jobs:
           # Заменяем старый файл
           mv new_changelog.md CHANGELOG.md
           
-          echo "CHANGELOG.md обновлен"
-          
       - name: "Закоммитить изменения в CHANGELOG"
         run: |
           VERSION=${{ needs.create-release-branch.outputs.release-version }}
@@ -279,5 +236,4 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add CHANGELOG.md
           git commit -m "docs: обновить CHANGELOG.md для версии $VERSION"
-          git push origin releases/$VERSION
-          echo "CHANGELOG.md закоммичен в релизную ветку"
+          git push origin main
