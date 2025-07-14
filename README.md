@@ -45,7 +45,7 @@ https://yandex.cloud/ru/docs/compute/quickstart/quick-create-linux#create-vm
 
 1. Флоу с проверками, который запускается при создании / изменении PR:
 
-    - запускает параллельно линтер через `npm run lint` и тесты через  `npm run test`
+    - запускает параллельно линер через `npm run lint` и тесты через  `npm run test`
 
     - нужно настроить ограничение на мердж изменений, если проверки не прошли
 
