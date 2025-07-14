@@ -99,7 +99,7 @@ https://yandex.cloud/ru/docs/compute/quickstart/quick-create-linux#create-vm
 
 4. Флоу выкатки релиза в прод
 
-    - принимает на вход версию релиза
+    - принимаеттт на вход версию релиза
 
     - проверяет, что существует образ в Container Registry с тегом `<версия_релиза>_latest`
 
