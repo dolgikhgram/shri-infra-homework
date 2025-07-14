@@ -7,6 +7,8 @@ permissions:
   contents: write
   pull-requests: write
   issues: write
+  actions: read
+  checks: read
 
 jobs:
   lint-and-test:
@@ -248,11 +250,21 @@ jobs:
           git commit -m "docs: обновить CHANGELOG.md для версии $VERSION"
           git push origin $BRANCH_NAME
           
-          # Создаем PR
-          gh pr create \
+          # Создаем PR с автоматическим merge
+          PR_URL=$(gh pr create \
             --title "docs: обновить CHANGELOG.md для версии $VERSION" \
-            --body "Автоматическое обновление CHANGELOG.md для релиза $VERSION" \
+            --body "Автоматическое обновление CHANGELOG.md для релиза $VERSION
+
+          Этот PR будет автоматически слит после успешного прохождения всех проверок." \
             --head $BRANCH_NAME \
-            --base main
+            --base main)
+          
+          # Получаем номер PR из URL
+          PR_NUMBER=$(echo $PR_URL | grep -o '[0-9]*$')
+          
+          # Включаем автоматический merge
+          gh pr merge $PR_NUMBER --auto --squash
+          
+          echo "✅ PR #$PR_NUMBER создан и настроен для автоматического слития после прохождения проверок"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
