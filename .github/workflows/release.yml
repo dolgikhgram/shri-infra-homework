@@ -38,7 +38,7 @@ jobs:
         with : 
           fetch-depth : 0
       
-      - name: "Установить версию релиза"
+      - name: "Установить версию релиз"
         id: set-version
         run: |
           VERSION=${{ github.run_number }}
